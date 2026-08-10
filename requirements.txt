@@ -1,0 +1,11 @@
+aiogram==3.30.0
+sqlalchemy[asyncio]==2.0.43
+asyncpg==0.30.0
+aiosqlite==0.21.0
+alembic==1.16.5
+pydantic-settings==2.11.0
+httpx==0.28.1
+aiohttp==3.13.2
+apscheduler==3.11.0
+# Нужен только для TELEGRAM_PROXY=socks5://...; для http:// не требуется.
+aiohttp-socks==0.10.1

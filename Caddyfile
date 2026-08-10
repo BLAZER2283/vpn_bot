@@ -1,0 +1,4 @@
+# Домен под subscription-endpoint. Внутри compose ссылаемся на сервис "bot".
+{$SUB_DOMAIN:http://bot:8080} {
+    reverse_proxy bot:8080
+}
