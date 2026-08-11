@@ -31,6 +31,7 @@ HELP = """<b>Админ-команды</b>
 /stats — сводка
 /nodes — список серверов
 /addnode — добавить сервер
+/delnode &lt;id&gt; — удалить сервер
 /syncnodes — перечитать инбаунды со всех панелей
 /drain — прогнать очередь выдачи сейчас
 /give &lt;tg_id&gt; &lt;plan|дни&gt; — начислить вручную
@@ -122,7 +123,19 @@ async def cmd_addnode(
             flag=flag,
         )
     except Exception as exc:  # noqa: BLE001 — показать причину админу
+        # Откат обязателен: запись ноды уже во flush, и без него middleware
+        # закоммитит её — в базе останется сервер без инбаундов.
+        await session.rollback()
         await message.answer(f"Не получилось: <code>{exc}</code>")
+        return
+
+    if inbounds == 0:
+        await session.rollback()
+        await message.answer(
+            "Панель ответила, но рабочих VLESS-инбаундов не нашлось.\n\n"
+            "Проверь в панели, что инбаунд включён, протокол vless, "
+            "а у REALITY заполнен публичный ключ. Сервер не добавлен."
+        )
         return
 
     await message.answer(
@@ -131,6 +144,35 @@ async def cmd_addnode(
         f"Задач на выдачу: {tasks}\n\n"
         "Клиенты создаются в фоне — у пользователей сервер появится "
         "при следующем обновлении подписки. Прогнать сейчас: /drain"
+    )
+
+
+@router.message(Command("delnode"))
+async def cmd_delnode(
+    message: Message, command: CommandObject, session: AsyncSession
+) -> None:
+    """/delnode <id> — удалить сервер из базы.
+
+    Клиентов на самой панели не трогает: команда нужна, чтобы убрать
+    ошибочные записи. Ссылки этой ноды исчезают из подписок сразу.
+    """
+    if not command.args or not command.args.strip().isdigit():
+        await message.answer(
+            "Формат: <code>/delnode 3</code>\nID смотри в /nodes"
+        )
+        return
+
+    node = await repo.node_by_id(session, int(command.args.strip()))
+    if node is None:
+        await message.answer("Такого сервера нет")
+        return
+
+    name = f"{node.flag} {node.name} (id {node.id})"
+    await session.delete(node)
+    await message.answer(
+        f"Удалён {name}.\n\n"
+        "Инбаунды и выданные на них клиенты убраны из базы. "
+        "На панели клиенты остались — при необходимости почисти вручную."
     )
 
 
