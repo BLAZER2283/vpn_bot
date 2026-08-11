@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -75,25 +76,65 @@ class ThreeXUIClient:
         )
         self._lock = asyncio.Lock()
         self._logged_in = False
+        self._csrf = ""
 
     async def aclose(self) -> None:
         await self._http.aclose()
 
     # ── транспорт ───────────────────────────────────────────────────────────
 
+    async def _fetch_csrf(self) -> str:
+        """Снять CSRF-токен со стартовой страницы панели.
+
+        Свежие сборки 3x-ui без него отвечают на /login 403. Именно так это
+        делал рабочий add_client.py — шаг обязательный, не оптимизация.
+        """
+        try:
+            # Стартовая страница обычно редиректит на /login — токен лежит
+            # уже там, поэтому переход разрешаем точечно.
+            resp = await self._http.get(f"{self._base}/", follow_redirects=True)
+        except httpx.HTTPError as exc:
+            raise PanelUnavailable(f"csrf: {exc}") from exc
+
+        match = re.search(
+            r'csrf-token"\s+content="([^"]+)"', resp.text
+        ) or re.search(r'name="csrf"\s+value="([^"]+)"', resp.text)
+        return match.group(1) if match else ""
+
     async def login(self) -> None:
         async with self._lock:
+            # Токен и сессионная кука приезжают с этой же страницы.
+            self._csrf = await self._fetch_csrf()
+
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Requested-With": "XMLHttpRequest",
+            }
+            if self._csrf:
+                headers["X-CSRF-Token"] = self._csrf
+
             try:
                 resp = await self._http.post(
                     f"{self._base}/login",
                     data={"username": self._username, "password": self._password},
-                    headers={"X-Requested-With": "XMLHttpRequest"},
+                    headers=headers,
                 )
             except httpx.HTTPError as exc:
                 raise PanelUnavailable(f"login: {exc}") from exc
 
+            if resp.status_code == 403:
+                raise PanelRejected(
+                    "login: 403 — панель отклонила запрос. Проверь, что адрес "
+                    "указан вместе с секретным путём, и что IP не заблокирован"
+                )
+            if resp.status_code == 404:
+                raise PanelRejected(
+                    "login: 404 — по этому адресу панели нет. Нужен базовый URL "
+                    "вида https://IP:ПОРТ/секретный_путь"
+                )
             if resp.status_code != 200:
                 raise PanelUnavailable(f"login: HTTP {resp.status_code}")
+
             try:
                 body = resp.json()
             except ValueError:
@@ -115,12 +156,19 @@ class ThreeXUIClient:
             await self.login()
 
         url = f"{self._base}{path}"
+        headers = {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        if self._csrf:
+            headers["X-CSRF-Token"] = self._csrf
+
         try:
             resp = await self._http.request(
                 method,
                 url,
                 json=json_body,
-                headers={"Accept": "application/json"},
+                headers=headers,
             )
         except httpx.HTTPError as exc:
             raise PanelUnavailable(f"{path}: {exc}") from exc
