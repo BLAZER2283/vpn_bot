@@ -246,6 +246,18 @@ class ThreeXUIClient:
             },
         )
 
+    async def add_client_form(
+        self, inbound_id: int, spec: PanelClientSpec
+    ) -> None:
+        await self._call(
+            "POST",
+            "/panel/api/inbounds/addClient",
+            form_body={
+                "id": str(inbound_id),
+                "settings": json.dumps(self._settings(spec)),
+            },
+        )
+
     async def update_client(
         self, inbound_id: int, spec: PanelClientSpec, target_uuid: str | None = None
     ) -> None:
@@ -310,6 +322,9 @@ class ThreeXUIClient:
             if not exc.is_duplicate:
                 raise
             await self.update_client(inbound_id, spec, target_uuid=known_uuid)
+
+        if not await self.client_exists(inbound_id, spec.email):
+            await self.add_client_form(inbound_id, spec)
 
         if not await self.client_exists(inbound_id, spec.email):
             raise PanelUnavailable(
