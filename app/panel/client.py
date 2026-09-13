@@ -240,11 +240,20 @@ class ThreeXUIClient:
     async def add_client(self, inbound_id: int, spec: PanelClientSpec) -> None:
         payload = spec.to_panel()
         payload["inboundIds"] = [inbound_id]
-        await self._call(
-            "POST",
-            "/panel/api/clients/add",
-            json_body=payload,
-        )
+        try:
+            await self._call(
+                "POST",
+                "/panel/api/clients/add",
+                json_body=payload,
+            )
+        except PanelRejected as exc:
+            if "email is required" not in str(exc).lower():
+                raise
+            await self._call(
+                "POST",
+                "/panel/api/clients/add",
+                json_body={"client": payload},
+            )
 
     async def update_client(
         self, inbound_id: int, spec: PanelClientSpec, target_uuid: str | None = None
