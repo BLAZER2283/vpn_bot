@@ -197,6 +197,12 @@ class ThreeXUIClient:
             raise PanelUnavailable(f"{path}: HTTP {resp.status_code}")
 
         if not resp.content:
+            log.warning(
+                "пустой ответ панели: %s HTTP %s content-type=%s",
+                path,
+                resp.status_code,
+                resp.headers.get("content-type", ""),
+            )
             # Известное поведение 3x-ui на addClient: пустое тело.
             # Разрешаем ответ только здесь: upsert_client сразу проверит
             # чтением, появился ли клиент в инбаунде.
