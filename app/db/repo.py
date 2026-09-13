@@ -120,11 +120,13 @@ async def node_by_id(session: AsyncSession, node_id: int) -> Node | None:
 async def node_by_panel_url(
     session: AsyncSession, panel_base_url: str
 ) -> Node | None:
-    return (
-        await session.execute(
-            select(Node).where(Node.panel_base_url == panel_base_url)
-        )
-    ).scalar_one_or_none()
+    stmt = (
+        select(Node)
+        .where(Node.panel_base_url == panel_base_url)
+        .order_by(Node.id)
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def active_inbound_ids(session: AsyncSession) -> list[int]:

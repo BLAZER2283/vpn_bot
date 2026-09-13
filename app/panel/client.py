@@ -192,7 +192,10 @@ class ThreeXUIClient:
 
         if not resp.content:
             # Известное поведение 3x-ui на addClient: пустое тело.
-            # Считаем неопределённостью, а не успехом.
+            # Разрешаем ответ только здесь: upsert_client сразу проверит
+            # чтением, появился ли клиент в инбаунде.
+            if path == "/panel/api/inbounds/addClient":
+                return None
             raise PanelUnavailable(f"{path}: пустой ответ")
 
         try:
