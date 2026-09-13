@@ -42,8 +42,8 @@ def _rate_limited(key: str) -> bool:
 
 
 def _client_ip(request: web.Request) -> str:
-    # X-Forwarded-For доверяем, только когда сами стоим за прокси.
-    if settings.sub_base_url.startswith("https://"):
+    # Заголовок клиента контролирует только доверенный reverse proxy.
+    if settings.trust_proxy_headers:
         forwarded = request.headers.get("X-Forwarded-For", "")
         if forwarded:
             return forwarded.split(",")[0].strip()

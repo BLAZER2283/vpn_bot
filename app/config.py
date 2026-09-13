@@ -61,9 +61,10 @@ class Settings(BaseSettings):
 
     sub_base_url: str = "http://127.0.0.1:8080"
     sub_port: int = 8080
-    sub_title: str = "MyVPN"
+    sub_title: str = "BLAZER VPN"
     sub_update_interval_hours: int = 12
     support_url: str = ""
+    trust_proxy_headers: bool = False
 
     trial_days: int = 2
     device_limit: int = 6
