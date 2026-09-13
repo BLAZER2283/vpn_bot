@@ -150,6 +150,7 @@ class ThreeXUIClient:
         path: str,
         *,
         json_body: dict | None = None,
+        form_body: dict | None = None,
         _retry: bool = True,
     ) -> Any:
         if not self._logged_in:
@@ -168,6 +169,7 @@ class ThreeXUIClient:
                 method,
                 url,
                 json=json_body,
+                data=form_body,
                 headers=headers,
             )
         except httpx.HTTPError as exc:
@@ -183,7 +185,11 @@ class ThreeXUIClient:
             if _retry:
                 await self.login()
                 return await self._call(
-                    method, path, json_body=json_body, _retry=False
+                    method,
+                    path,
+                    json_body=json_body,
+                    form_body=form_body,
+                    _retry=False,
                 )
             raise PanelAuthError(f"{path}: сессия не поднялась")
 
@@ -234,7 +240,7 @@ class ThreeXUIClient:
         await self._call(
             "POST",
             "/panel/api/inbounds/addClient",
-            json_body={
+            form_body={
                 "id": inbound_id,
                 "settings": json.dumps(self._settings(spec)),
             },
@@ -251,7 +257,7 @@ class ThreeXUIClient:
         await self._call(
             "POST",
             f"/panel/api/inbounds/updateClient/{target_uuid or spec.uuid}",
-            json_body={
+            form_body={
                 "id": inbound_id,
                 "settings": json.dumps(self._settings(spec)),
             },
