@@ -18,6 +18,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -44,16 +45,27 @@ class PanelClientSpec:
 
     def to_panel(self) -> dict[str, Any]:
         return {
-            "id": self.uuid,
+            "uuid": self.uuid,
             "email": self.email,
             "subId": self.sub_id,
+            "password": "",
+            "auth": "",
             "flow": self.flow,
+            "security": "",
+            "reverseTag": "",
             "limitIp": self.limit_ip,
+            "limitHwid": 0,
             "totalGB": self.total_gb,
             "expiryTime": self.expiry_ms,
+            "delayedStart": False,
+            "delayedDays": 0,
             "enable": self.enable,
-            "tgId": self.tg_id,
+            "tgId": 0,
+            "group": "",
+            "comment": "",
             "reset": 0,
+            "resetDay": 0,
+            "inboundIds": [],
         }
 
 
@@ -203,17 +215,6 @@ class ThreeXUIClient:
                 resp.status_code,
                 resp.headers.get("content-type", ""),
             )
-            # Известное поведение 3x-ui на addClient: пустое тело.
-            # Разрешаем ответ только здесь: upsert_client сразу проверит
-            # чтением, появился ли клиент в инбаунде.
-            # getClientTraffics также может быть пустым для нового клиента;
-            # client_exists в этом случае проверит настройки инбаунда.
-            if path in (
-                "/panel/api/inbounds/addClient",
-                "/panel/api/inbounds/getClientTraffics/"
-                + path.rsplit("/", 1)[-1],
-            ):
-                return None
             raise PanelUnavailable(f"{path}: пустой ответ")
 
         try:
@@ -236,32 +237,13 @@ class ThreeXUIClient:
 
     # ── клиенты ─────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _settings(spec: PanelClientSpec) -> dict:
-        # settings — именно JSON-СТРОКА. Объект панель не разбирает и отвечает
-        # "Fail: unexpected end of JSON input".
-        return {"clients": [spec.to_panel()]}
-
     async def add_client(self, inbound_id: int, spec: PanelClientSpec) -> None:
+        payload = spec.to_panel()
+        payload["inboundIds"] = [inbound_id]
         await self._call(
             "POST",
-            "/panel/api/inbounds/addClient",
-            json_body={
-                "id": inbound_id,
-                "settings": json.dumps(self._settings(spec)),
-            },
-        )
-
-    async def add_client_form(
-        self, inbound_id: int, spec: PanelClientSpec
-    ) -> None:
-        await self._call(
-            "POST",
-            "/panel/api/inbounds/addClient",
-            form_body={
-                "id": str(inbound_id),
-                "settings": json.dumps(self._settings(spec)),
-            },
+            "/panel/api/clients/add",
+            json_body=payload,
         )
 
     async def update_client(
@@ -272,13 +254,12 @@ class ThreeXUIClient:
         target_uuid — какого клиента заменяем. Совпадает со spec.uuid всегда,
         кроме ротации ключа: там в URL нужен старый UUID, а новый едет в теле.
         """
+        payload = spec.to_panel()
+        payload["inboundIds"] = [inbound_id]
         await self._call(
             "POST",
-            f"/panel/api/inbounds/updateClient/{target_uuid or spec.uuid}",
-            json_body={
-                "id": inbound_id,
-                "settings": json.dumps(self._settings(spec)),
-            },
+            f"/panel/api/clients/update/{quote(spec.email, safe='')}",
+            json_body=payload,
         )
 
     async def delete_client(self, inbound_id: int, uuid: str) -> None:
@@ -286,29 +267,22 @@ class ThreeXUIClient:
             "POST", f"/panel/api/inbounds/{inbound_id}/delClient/{uuid}"
         )
 
-    async def get_client_traffics(self, email: str) -> dict | None:
+    async def get_client(self, email: str) -> dict | None:
         try:
             return await self._call(
-                "GET", f"/panel/api/inbounds/getClientTraffics/{email}"
+                "GET", f"/panel/api/clients/get/{quote(email, safe='')}"
             )
         except PanelRejected:
             return None
 
     async def client_exists(self, inbound_id: int, email: str) -> bool:
-        """Есть ли клиент в панели на самом деле.
-
-        Сначала дёшево — getClientTraffics. Для только что созданного клиента
-        он у части сборок отдаёт null, поэтому подстраховываемся чтением
-        самого инбаунда.
-        """
-        traffic = await self.get_client_traffics(email)
-        if traffic:
+        """Проверить наличие клиента через API клиентов новой панели."""
+        result = await self.get_client(email)
+        if not result:
+            return False
+        if result.get("email") == email:
             return True
-
-        inbound = await self.get_inbound(inbound_id)
-        raw = inbound.get("settings")
-        settings = json.loads(raw) if isinstance(raw, str) else (raw or {})
-        return any(c.get("email") == email for c in settings.get("clients", []))
+        return bool(result.get("client"))
 
     async def upsert_client(
         self,
@@ -328,9 +302,6 @@ class ThreeXUIClient:
             if not exc.is_duplicate:
                 raise
             await self.update_client(inbound_id, spec, target_uuid=known_uuid)
-
-        if not await self.client_exists(inbound_id, spec.email):
-            await self.add_client_form(inbound_id, spec)
 
         if not await self.client_exists(inbound_id, spec.email):
             raise PanelUnavailable(
