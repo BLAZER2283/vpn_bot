@@ -104,6 +104,10 @@ def build_vless_link(
     """Собрать vless://-ссылку. host берётся из ноды, не из инбаунда."""
     meta = dict(stream_meta)
     meta.pop("problems", None)
+    if meta.get("security") == "tls" and not meta.get("sni"):
+        meta["sni"] = host
+    if meta.get("network") == "ws" and not meta.get("host"):
+        meta["host"] = host
     flow = meta.pop("flow", "")
 
     query: dict[str, str] = {
