@@ -194,7 +194,13 @@ class ThreeXUIClient:
             # Известное поведение 3x-ui на addClient: пустое тело.
             # Разрешаем ответ только здесь: upsert_client сразу проверит
             # чтением, появился ли клиент в инбаунде.
-            if path == "/panel/api/inbounds/addClient":
+            # getClientTraffics также может быть пустым для нового клиента;
+            # client_exists в этом случае проверит настройки инбаунда.
+            if path in (
+                "/panel/api/inbounds/addClient",
+                "/panel/api/inbounds/getClientTraffics/"
+                + path.rsplit("/", 1)[-1],
+            ):
                 return None
             raise PanelUnavailable(f"{path}: пустой ответ")
 
