@@ -240,7 +240,7 @@ class ThreeXUIClient:
         await self._call(
             "POST",
             "/panel/api/inbounds/addClient",
-            form_body={
+            json_body={
                 "id": inbound_id,
                 "settings": json.dumps(self._settings(spec)),
             },
@@ -257,7 +257,7 @@ class ThreeXUIClient:
         await self._call(
             "POST",
             f"/panel/api/inbounds/updateClient/{target_uuid or spec.uuid}",
-            form_body={
+            json_body={
                 "id": inbound_id,
                 "settings": json.dumps(self._settings(spec)),
             },
