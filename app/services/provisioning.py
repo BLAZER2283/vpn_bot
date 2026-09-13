@@ -70,19 +70,19 @@ async def _apply(session: AsyncSession, client: SubscriptionClient) -> None:
             except PanelRejected:
                 pass  # уже нет — не беда
 
-        await panel.upsert_client(
+        remote_uuid = await panel.upsert_client(
             inbound_id, _spec(client, enable=True), known_uuid=stale
         )
-        client.remote_uuid = client.subscription.client_uuid
+        client.remote_uuid = remote_uuid or client.subscription.client_uuid
         client.state = ClientState.ACTIVE.value
 
     elif target == ClientState.DISABLING.value:
-        await panel.upsert_client(
+        remote_uuid = await panel.upsert_client(
             inbound_id,
             _spec(client, enable=False),
             known_uuid=client.remote_uuid,
         )
-        client.remote_uuid = client.subscription.client_uuid
+        client.remote_uuid = remote_uuid or client.subscription.client_uuid
         client.state = ClientState.DISABLED.value
 
     elif target == ClientState.REMOVING.value:

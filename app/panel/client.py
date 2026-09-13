@@ -290,7 +290,7 @@ class ThreeXUIClient:
         inbound_id: int,
         spec: PanelClientSpec,
         known_uuid: str | None = None,
-    ) -> None:
+    ) -> str | None:
         """Создать или обновить клиента и убедиться, что он действительно есть.
 
         known_uuid — UUID, под которым клиент уже лежит на панели (если лежит).
@@ -308,6 +308,10 @@ class ThreeXUIClient:
             raise PanelUnavailable(
                 f"клиент {spec.email} не найден после записи — повторим"
             )
+
+        saved = await self.get_client(spec.email)
+        client = (saved or {}).get("client") or saved or {}
+        return client.get("uuid") or None
 
     async def ping(self) -> bool:
         try:

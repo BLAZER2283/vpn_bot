@@ -31,7 +31,7 @@ def render_links(
             build_vless_link(
                 host=node.public_host,
                 port=inbound.port,
-                uuid=sub.client_uuid,
+                uuid=client.remote_uuid or sub.client_uuid,
                 stream_meta=inbound.stream_meta,
                 label=label,
             )
