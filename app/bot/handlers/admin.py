@@ -191,10 +191,20 @@ async def cmd_syncnodes(message: Message, session: AsyncSession) -> None:
 
 
 @router.message(Command("drain"))
-async def cmd_drain(message: Message) -> None:
+async def cmd_drain(message: Message, session: AsyncSession) -> None:
     # Своя транзакция внутри — вне сессии этого апдейта.
     processed = await provisioning.drain()
-    await message.answer(f"Обработано записей: {processed}")
+    errors = await repo.provisioning_errors(session)
+    if not errors:
+        await message.answer(f"Обработано записей: {processed}\nОшибок нет.")
+        return
+
+    lines = [f"Обработано записей: {processed}", "", "Последние ошибки:"]
+    lines.extend(
+        f"• client {client.id}: {client.last_error}"
+        for client in errors
+    )
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("give"))

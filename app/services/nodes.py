@@ -121,16 +121,26 @@ async def add_node(
 
     Возвращает (нода, сколько инбаундов, сколько задач на выдачу).
     """
-    node = Node(
-        name=name,
-        flag=flag,
-        panel_base_url=panel_base_url.rstrip("/"),
-        panel_user=panel_user,
-        panel_pass=panel_pass,
-        public_host=public_host,
-    )
-    session.add(node)
-    await session.flush()
+    normalized_url = panel_base_url.rstrip("/")
+    node = await repo.node_by_panel_url(session, normalized_url)
+    if node is None:
+        node = Node(
+            name=name,
+            flag=flag,
+            panel_base_url=normalized_url,
+            panel_user=panel_user,
+            panel_pass=panel_pass,
+            public_host=public_host,
+        )
+        session.add(node)
+        await session.flush()
+    else:
+        node.name = name
+        node.flag = flag
+        node.panel_user = panel_user
+        node.panel_pass = panel_pass
+        node.public_host = public_host
+        node.is_active = True
 
     inbounds = await sync_inbounds(session, node)
     await session.flush()

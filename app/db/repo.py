@@ -117,6 +117,16 @@ async def node_by_id(session: AsyncSession, node_id: int) -> Node | None:
     ).scalar_one_or_none()
 
 
+async def node_by_panel_url(
+    session: AsyncSession, panel_base_url: str
+) -> Node | None:
+    return (
+        await session.execute(
+            select(Node).where(Node.panel_base_url == panel_base_url)
+        )
+    ).scalar_one_or_none()
+
+
 async def active_inbound_ids(session: AsyncSession) -> list[int]:
     """Инбаунды, которые сейчас должны быть у каждой активной подписки."""
     stmt = (
@@ -295,6 +305,21 @@ async def take_work_batch(
         .order_by(SubscriptionClient.id)
     )
     return list((await session.execute(stmt)).unique().scalars())
+
+
+async def provisioning_errors(
+    session: AsyncSession, limit: int = 3
+) -> list[SubscriptionClient]:
+    stmt = (
+        select(SubscriptionClient)
+        .where(
+            SubscriptionClient.state.in_(WORK_STATES + (ClientState.FAILED.value,)),
+            SubscriptionClient.last_error.is_not(None),
+        )
+        .order_by(SubscriptionClient.updated_at.desc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars())
 
 
 async def record_failure(
