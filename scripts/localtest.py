@@ -124,7 +124,7 @@ class FakePanel:
             "flow": spec.flow,
         }
 
-    async def delete_client(self, inbound_id, uuid) -> None:
+    async def delete_client(self, inbound_id, uuid, email=None) -> None:
         for key, value in list(self.clients.items()):
             if key[0] == inbound_id and value["uuid"] == uuid:
                 del self.clients[key]
@@ -184,6 +184,7 @@ async def main() -> int:
         async with session_factory() as session:
             user = await repo.get_or_create_user(session, 555, "tester")
             sub = await sub_service.start_trial(session, user)
+            await node_service.assign_node_to_subscription(session, sub, node)
             await session.commit()
             sub_id, token = sub.id, sub.sub_token
         check(sub is not None, "триал выдан")

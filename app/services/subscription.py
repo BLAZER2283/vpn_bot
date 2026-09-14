@@ -92,9 +92,6 @@ async def create_subscription(
     session.add(device)
     await session.flush()
 
-    for node_id in await repo.active_node_ids(session):
-        await repo.assign_node(session, sub.id, node_id)
-
     await _enqueue_all_inbounds(session, sub)
     return sub
 

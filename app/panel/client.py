@@ -263,9 +263,14 @@ class ThreeXUIClient:
             json_body=payload,
         )
 
-    async def delete_client(self, inbound_id: int, uuid: str) -> None:
+    async def delete_client(
+        self, inbound_id: int, uuid: str, email: str | None = None
+    ) -> None:
+        del inbound_id, uuid
+        if email is None:
+            raise PanelRejected("удаление клиента требует email для нового API x-ui")
         await self._call(
-            "POST", f"/panel/api/inbounds/{inbound_id}/delClient/{uuid}"
+            "POST", f"/panel/api/clients/del/{quote(email, safe='')}"
         )
 
     async def get_client(self, email: str) -> dict | None:

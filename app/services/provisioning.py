@@ -71,7 +71,7 @@ async def _apply(session: AsyncSession, client: SubscriptionClient) -> None:
         stale = client.remote_uuid
         if stale and stale != client.subscription.client_uuid:
             try:
-                await panel.delete_client(inbound_id, stale)
+                await panel.delete_client(inbound_id, stale, client.remote_email)
             except PanelRejected:
                 pass  # уже нет — не беда
 
@@ -93,7 +93,7 @@ async def _apply(session: AsyncSession, client: SubscriptionClient) -> None:
     elif target == ClientState.REMOVING.value:
         uuid = client.remote_uuid or client.subscription.client_uuid
         try:
-            await panel.delete_client(inbound_id, uuid)
+            await panel.delete_client(inbound_id, uuid, client.remote_email)
         except PanelRejected as exc:
             # Нет клиента — цель достигнута.
             log.info("delete %s: %s", client.remote_email, exc)
