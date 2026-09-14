@@ -240,6 +240,9 @@ async def main() -> int:
                 public_host="10.0.0.2",
                 flag="🇩🇪",
             )
+            tasks2 = await node_service.assign_node_to_subscription(
+                session, sub, node2
+            )
             await session.commit()
         check(tasks2 == 2, f"задач на выдачу существующей подписке: {tasks2}")
 

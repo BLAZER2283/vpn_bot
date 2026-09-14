@@ -30,6 +30,7 @@ BATCH = 50
 def _spec(client: SubscriptionClient, *, enable: bool) -> PanelClientSpec:
     sub = client.subscription
     inbound = client.inbound
+    device = client.device
 
     # expiryTime на панели — вторая линия обороны на случай, если джоба
     # отключения не сработает. По умолчанию выключено: требует, чтобы часы
@@ -39,11 +40,15 @@ def _spec(client: SubscriptionClient, *, enable: bool) -> PanelClientSpec:
         expiry_ms = int(sub.expires_at.timestamp() * 1000)
 
     return PanelClientSpec(
-        uuid=sub.client_uuid,
+        uuid=device.client_uuid if device else sub.client_uuid,
         email=client.remote_email,
         # В панель кладём безобидный идентификатор, а не sub_token:
         # секретный токен не должен расползаться по чужим серверам.
-        sub_id=f"s{sub.id}",
+        sub_id=(
+            f"s{sub.id}"
+            if device is None or device.name == "Основное устройство"
+            else f"s{sub.id}d{device.id}"
+        ),
         flow=inbound.stream_meta.get("flow", ""),
         limit_ip=sub.device_limit,
         total_gb=0,

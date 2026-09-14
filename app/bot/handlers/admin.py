@@ -34,6 +34,11 @@ HELP = """<b>Админ-команды</b>
 /delnode &lt;id&gt; — удалить сервер
 /syncnodes — перечитать инбаунды со всех панелей
 /drain — прогнать очередь выдачи сейчас
+/grantnode &lt;tg_id&gt; &lt;node_id&gt; — выдать ноду пользователю
+/revokenode &lt;tg_id&gt; &lt;node_id&gt; — убрать ноду у пользователя
+/delnode &lt;node_id&gt; — удалить ноду из панели бота
+
+Пользовательские команды устройств: /devices, /adddevice, /deldevice
 /give &lt;tg_id&gt; &lt;plan|дни&gt; — начислить вручную
 /whois &lt;tg_id&gt; — что у пользователя
 /say &lt;текст&gt; — рассылка всем
@@ -205,6 +210,42 @@ async def cmd_drain(message: Message, session: AsyncSession) -> None:
         for client in errors
     )
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("grantnode"))
+async def cmd_grantnode(
+    message: Message, command: CommandObject, session: AsyncSession
+) -> None:
+    args = (command.args or "").split()
+    if len(args) != 2 or not all(arg.isdigit() for arg in args):
+        await message.answer("Формат: <code>/grantnode tg_id node_id</code>")
+        return
+    user = await repo.get_user_by_tg(session, int(args[0]))
+    node = await repo.node_by_id(session, int(args[1]))
+    sub = await repo.latest_subscription(session, user.id) if user else None
+    if user is None or node is None or sub is None:
+        await message.answer("Пользователь, сервер или подписка не найдены")
+        return
+    tasks = await node_service.assign_node_to_subscription(session, sub, node)
+    await message.answer(f"Нода {node.name} назначена. Задач на выдачу: {tasks}")
+
+
+@router.message(Command("revokenode"))
+async def cmd_revokenode(
+    message: Message, command: CommandObject, session: AsyncSession
+) -> None:
+    args = (command.args or "").split()
+    if len(args) != 2 or not all(arg.isdigit() for arg in args):
+        await message.answer("Формат: <code>/revokenode tg_id node_id</code>")
+        return
+    user = await repo.get_user_by_tg(session, int(args[0]))
+    node = await repo.node_by_id(session, int(args[1]))
+    sub = await repo.latest_subscription(session, user.id) if user else None
+    if user is None or node is None or sub is None:
+        await message.answer("Пользователь, сервер или подписка не найдены")
+        return
+    await node_service.unassign_node_from_subscription(session, sub, node)
+    await message.answer(f"Нода {node.name} убирается у пользователя через очередь.")
 
 
 @router.message(Command("give"))

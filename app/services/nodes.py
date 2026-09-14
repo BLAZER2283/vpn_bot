@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repo
-from app.db.models import Inbound, Node, SubStatus, Subscription
+from app.db.models import Inbound, Node, SubStatus, Subscription, SubscriptionNode
 from app.db.repo import utcnow
 from app.panel import pool
 from app.panel.links import parse_inbound
@@ -89,6 +89,8 @@ async def backfill_node(session: AsyncSession, node: Node) -> int:
                 select(Subscription).where(
                     Subscription.status == SubStatus.ACTIVE.value,
                     Subscription.expires_at > utcnow(),
+                    SubscriptionNode.subscription_id == Subscription.id,
+                    SubscriptionNode.node_id == node.id,
                 )
             )
         ).scalars()
@@ -157,3 +159,22 @@ async def set_node_active(
     не трогает: если это временная мера, включение вернёт всё как было.
     """
     node.is_active = active
+
+
+async def assign_node_to_subscription(
+    session: AsyncSession, sub: Subscription, node: Node
+) -> int:
+    await repo.assign_node(session, sub.id, node.id)
+    inbound_ids = await repo.active_inbound_ids_for_node(session, node.id)
+    devices = await repo.devices_of_subscription(session, sub.id)
+    for device in devices:
+        email = f"sub{sub.id}" if device.id == devices[0].id else f"sub{sub.id}d{device.id}"
+        for inbound_id in inbound_ids:
+            await repo.enqueue_client(session, sub.id, inbound_id, email, device.id)
+    return len(inbound_ids) * len(devices)
+
+
+async def unassign_node_from_subscription(
+    session: AsyncSession, sub: Subscription, node: Node
+) -> None:
+    await repo.unassign_node(session, sub.id, node.id)

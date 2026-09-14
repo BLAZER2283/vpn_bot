@@ -85,8 +85,8 @@ async def main() -> None:
         print("=" * 70)
         print("Проверка API точечной записи (без записи):")
         try:
-            await panel.get_client_traffics("__nonexistent_probe__")
-            print("  getClientTraffics отвечает — точечные ручки доступны")
+            await panel.get_client("__nonexistent_probe__")
+            print("  clients/get отвечает — API клиентов доступен")
         except Exception as exc:  # noqa: BLE001
             print(f"  getClientTraffics: {exc}")
     finally:

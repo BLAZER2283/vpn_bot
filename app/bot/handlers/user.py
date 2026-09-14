@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, LinkPreviewOptions, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,6 +82,48 @@ async def show_subscription(
         return
 
     await _show_subscription(message, session, sub)
+
+
+@router.message(Command("devices"))
+async def show_devices(message: Message, session: AsyncSession, user: User) -> None:
+    sub = await repo.latest_subscription(session, user.id)
+    if sub is None or not sub_service.is_live(sub):
+        await message.answer("Активной подписки нет")
+        return
+    devices = await repo.devices_of_subscription(session, sub.id)
+    lines = [f"Устройства: {len(devices)}/{settings.device_limit}", ""]
+    for device in devices:
+        lines.append(f"{device.id}. {device.name}\n<code>{settings.sub_url(device.device_token)}</code>")
+    lines.append("\nДобавить: /adddevice название\nУдалить: /deldevice ID")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("adddevice"))
+async def add_device(message: Message, command: CommandObject, session: AsyncSession, user: User) -> None:
+    name = (command.args or "").strip()
+    device, count = await sub_service.add_device(session, user, name)
+    if device is None:
+        if count >= settings.device_limit:
+            await message.answer(f"Достигнут лимит: {settings.device_limit} устройств")
+        else:
+            await message.answer("Нужна активная подписка")
+        return
+    await message.answer(
+        f"Устройство <b>{device.name}</b> добавлено ({count}/{settings.device_limit}).\n\n"
+        f"Ссылка устройства:\n<code>{settings.sub_url(device.device_token)}</code>"
+    )
+
+
+@router.message(Command("deldevice"))
+async def del_device(message: Message, command: CommandObject, session: AsyncSession, user: User) -> None:
+    raw = (command.args or "").strip()
+    if not raw.isdigit():
+        await message.answer("Формат: <code>/deldevice ID</code>. ID смотри в /devices")
+        return
+    if not await sub_service.remove_device(session, user, int(raw)):
+        await message.answer("Устройство не найдено или нельзя удалить последнее устройство")
+        return
+    await message.answer("Устройство удаляется. Через несколько секунд обнови список устройств.")
 
 
 @router.callback_query(F.data == kb.CB_TRIAL)

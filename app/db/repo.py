@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Select, func, select, update
+from sqlalchemy import Select, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,12 +13,14 @@ from sqlalchemy.orm import joinedload
 from app.db.base import IS_SQLITE
 from app.db.models import (
     ClientState,
+    Device,
     Inbound,
     Node,
     Payment,
     PaymentStatus,
     SubStatus,
     Subscription,
+    SubscriptionNode,
     SubscriptionClient,
     User,
 )
@@ -88,6 +90,48 @@ async def subscription_by_token(
     return (await session.execute(stmt)).scalar_one_or_none()
 
 
+async def device_by_token(
+    session: AsyncSession, token: str
+) -> Device | None:
+    stmt = (
+        select(Device)
+        .options(joinedload(Device.subscription))
+        .where(Device.device_token == token, Device.is_active.is_(True))
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def devices_of_subscription(
+    session: AsyncSession, sub_id: int
+) -> list[Device]:
+    stmt = (
+        select(Device)
+        .where(Device.subscription_id == sub_id, Device.is_active.is_(True))
+        .order_by(Device.id)
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def device_by_id(
+    session: AsyncSession, sub_id: int, device_id: int
+) -> Device | None:
+    stmt = select(Device).where(
+        Device.id == device_id,
+        Device.subscription_id == sub_id,
+        Device.is_active.is_(True),
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def deactivate_device(session: AsyncSession, device: Device) -> None:
+    device.is_active = False
+    await session.execute(
+        update(SubscriptionClient)
+        .where(SubscriptionClient.device_id == device.id)
+        .values(state=ClientState.REMOVING.value, next_attempt_at=None)
+    )
+
+
 async def subscription_with_user(
     session: AsyncSession, sub_id: int
 ) -> Subscription | None:
@@ -137,6 +181,67 @@ async def active_inbound_ids(session: AsyncSession) -> list[int]:
         .where(Inbound.is_active.is_(True), Node.is_active.is_(True))
     )
     return list((await session.execute(stmt)).scalars())
+
+
+async def active_node_ids(session: AsyncSession) -> list[int]:
+    stmt = select(Node.id).where(Node.is_active.is_(True))
+    return list((await session.execute(stmt)).scalars())
+
+
+async def active_inbound_ids_for_node(
+    session: AsyncSession, node_id: int
+) -> list[int]:
+    stmt = select(Inbound.id).where(
+        Inbound.node_id == node_id, Inbound.is_active.is_(True)
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def assigned_inbound_ids(
+    session: AsyncSession, sub_id: int
+) -> list[int]:
+    stmt = (
+        select(Inbound.id)
+        .join(Node, Node.id == Inbound.node_id)
+        .join(SubscriptionNode, SubscriptionNode.node_id == Node.id)
+        .where(
+            SubscriptionNode.subscription_id == sub_id,
+            Inbound.is_active.is_(True),
+            Node.is_active.is_(True),
+        )
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def assign_node(session: AsyncSession, sub_id: int, node_id: int) -> None:
+    await session.execute(
+        insert(SubscriptionNode)
+        .values(subscription_id=sub_id, node_id=node_id)
+        .on_conflict_do_nothing(
+            index_elements=[SubscriptionNode.subscription_id, SubscriptionNode.node_id]
+        )
+    )
+
+
+async def unassign_node(session: AsyncSession, sub_id: int, node_id: int) -> None:
+    await session.execute(
+        update(SubscriptionClient)
+        .where(
+            SubscriptionClient.subscription_id == sub_id,
+            SubscriptionClient.inbound_id.in_(
+                select(Inbound.id).where(Inbound.node_id == node_id)
+            ),
+            SubscriptionClient.state != ClientState.REMOVED.value,
+        )
+        .values(state=ClientState.REMOVING.value, next_attempt_at=None)
+    )
+    await session.execute(
+        delete(SubscriptionNode)
+        .where(
+            SubscriptionNode.subscription_id == sub_id,
+            SubscriptionNode.node_id == node_id,
+        )
+    )
 
 
 async def upsert_inbound(
@@ -191,7 +296,8 @@ def _renderable() -> Select:
     return (
         select(SubscriptionClient)
         .options(
-            joinedload(SubscriptionClient.inbound).joinedload(Inbound.node)
+            joinedload(SubscriptionClient.inbound).joinedload(Inbound.node),
+            joinedload(SubscriptionClient.device),
         )
         .join(Inbound, Inbound.id == SubscriptionClient.inbound_id)
         .join(Node, Node.id == Inbound.node_id)
@@ -205,9 +311,11 @@ def _renderable() -> Select:
 
 
 async def clients_for_render(
-    session: AsyncSession, sub_id: int
+    session: AsyncSession, sub_id: int, device_id: int | None = None
 ) -> list[SubscriptionClient]:
     stmt = _renderable().where(SubscriptionClient.subscription_id == sub_id)
+    if device_id is not None:
+        stmt = stmt.where(SubscriptionClient.device_id == device_id)
     return list((await session.execute(stmt)).unique().scalars())
 
 
@@ -223,7 +331,11 @@ async def clients_of_subscription(
 
 
 async def enqueue_client(
-    session: AsyncSession, sub_id: int, inbound_id: int, remote_email: str
+    session: AsyncSession,
+    sub_id: int,
+    inbound_id: int,
+    remote_email: str,
+    device_id: int | None = None,
 ) -> None:
     """Поставить клиента в очередь на создание. Идемпотентно."""
     stmt = (
@@ -231,14 +343,21 @@ async def enqueue_client(
         .values(
             subscription_id=sub_id,
             inbound_id=inbound_id,
+            device_id=device_id,
             remote_email=remote_email,
             state=ClientState.PENDING.value,
         )
-        .on_conflict_do_nothing(
+        .on_conflict_do_update(
             index_elements=[
-                SubscriptionClient.subscription_id,
+                SubscriptionClient.device_id,
                 SubscriptionClient.inbound_id,
-            ]
+            ],
+            set_={
+                "state": ClientState.PENDING.value,
+                "attempts": 0,
+                "last_error": None,
+                "next_attempt_at": None,
+            },
         )
     )
     await session.execute(stmt)
@@ -302,6 +421,7 @@ async def take_work_batch(
         .options(
             joinedload(SubscriptionClient.inbound).joinedload(Inbound.node),
             joinedload(SubscriptionClient.subscription),
+            joinedload(SubscriptionClient.device),
         )
         .where(SubscriptionClient.id.in_(ids))
         .order_by(SubscriptionClient.id)

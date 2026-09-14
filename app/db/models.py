@@ -147,20 +147,69 @@ class Subscription(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="subscriptions")
+    devices: Mapped[list["Device"]] = relationship(
+        back_populates="subscription", cascade="all, delete-orphan"
+    )
+    node_assignments: Mapped[list["SubscriptionNode"]] = relationship(
+        back_populates="subscription", cascade="all, delete-orphan"
+    )
     clients: Mapped[list["SubscriptionClient"]] = relationship(
         back_populates="subscription", cascade="all, delete-orphan"
     )
+
+
+class Device(Base):
+    """Устройство подписки с отдельным UUID и ссылкой."""
+
+    __tablename__ = "devices"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(64), default="Устройство")
+    device_token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    client_uuid: Mapped[str] = mapped_column(String(36))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, server_default=func.now()
+    )
+
+    subscription: Mapped[Subscription] = relationship(back_populates="devices")
+    clients: Mapped[list["SubscriptionClient"]] = relationship(
+        back_populates="device"
+    )
+
+
+class SubscriptionNode(Base):
+    """Разрешенная нода для конкретной подписки."""
+
+    __tablename__ = "subscription_nodes"
+    __table_args__ = (UniqueConstraint("subscription_id", "node_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="CASCADE"), index=True
+    )
+    node_id: Mapped[int] = mapped_column(
+        ForeignKey("nodes.id", ondelete="CASCADE"), index=True
+    )
+    subscription: Mapped[Subscription] = relationship(back_populates="node_assignments")
+    node: Mapped[Node] = relationship()
 
 
 class SubscriptionClient(Base):
     """Клиент подписки на конкретном инбаунде конкретной ноды."""
 
     __tablename__ = "subscription_clients"
-    __table_args__ = (UniqueConstraint("subscription_id", "inbound_id"),)
+    __table_args__ = (UniqueConstraint("device_id", "inbound_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     subscription_id: Mapped[int] = mapped_column(
         ForeignKey("subscriptions.id", ondelete="CASCADE"), index=True
+    )
+    device_id: Mapped[int | None] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"), index=True
     )
     inbound_id: Mapped[int] = mapped_column(ForeignKey("inbounds.id", ondelete="CASCADE"))
 
@@ -183,6 +232,7 @@ class SubscriptionClient(Base):
     )
 
     subscription: Mapped[Subscription] = relationship(back_populates="clients")
+    device: Mapped[Device | None] = relationship(back_populates="clients")
     inbound: Mapped[Inbound] = relationship()
 
 

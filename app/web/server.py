@@ -57,13 +57,14 @@ async def handle_subscription(request: web.Request) -> web.Response:
         return web.Response(status=429, text="", headers={"Retry-After": "60"})
 
     async with session_factory() as session:
-        sub = await repo.subscription_by_token(session, token)
+        device = await repo.device_by_token(session, token)
+        sub = device.subscription if device else None
         # Одинаковый 404 для несуществующего и погашенного токена: перебор
         # не должен различать «нет такого» и «есть, но неактивен».
         if sub is None or not is_live(sub):
             return web.Response(status=404, text="")
 
-        clients = await repo.clients_for_render(session, sub.id)
+        clients = await repo.clients_for_render(session, sub.id, device.id)
         links = render_links(clients, sub)
 
     headers = {

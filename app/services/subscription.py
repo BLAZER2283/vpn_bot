@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import repo
-from app.db.models import ClientState, SubStatus, Subscription, User
+from app.db.models import ClientState, Device, SubStatus, Subscription, User
 from app.db.repo import utcnow
 
 log = logging.getLogger(__name__)
@@ -43,12 +43,15 @@ def add_months(moment: datetime, months: int) -> datetime:
 
 
 async def _enqueue_all_inbounds(session: AsyncSession, sub: Subscription) -> None:
-    """Поставить подписку в очередь на выдачу по всем активным инбаундам."""
-    inbound_ids = await repo.active_inbound_ids(session)
-    for inbound_id in inbound_ids:
-        await repo.enqueue_client(
-            session, sub.id, inbound_id, client_email(sub.id)
-        )
+    """Поставить устройства подписки в очередь на разрешенных нодах."""
+    inbound_ids = await repo.assigned_inbound_ids(session, sub.id)
+    devices = await repo.devices_of_subscription(session, sub.id)
+    for device in devices:
+        email = client_email(sub.id) if device.id == devices[0].id else f"sub{sub.id}d{device.id}"
+        for inbound_id in inbound_ids:
+            await repo.enqueue_client(
+                session, sub.id, inbound_id, email, device.id
+            )
     if not inbound_ids:
         log.warning("нет активных инбаундов — подписке %s нечего выдавать", sub.id)
 
@@ -79,6 +82,18 @@ async def create_subscription(
     )
     session.add(sub)
     await session.flush()  # нужен sub.id для email клиентов
+
+    device = Device(
+        subscription_id=sub.id,
+        name="Основное устройство",
+        device_token=sub.sub_token,
+        client_uuid=sub.client_uuid,
+    )
+    session.add(device)
+    await session.flush()
+
+    for node_id in await repo.active_node_ids(session):
+        await repo.assign_node(session, sub.id, node_id)
 
     await _enqueue_all_inbounds(session, sub)
     return sub
@@ -151,6 +166,42 @@ async def start_trial(
     )
 
 
+async def add_device(
+    session: AsyncSession, user: User, name: str
+) -> tuple[Device | None, int]:
+    sub = await repo.latest_subscription(session, user.id)
+    if sub is None or not is_live(sub):
+        return None, 0
+    devices = await repo.devices_of_subscription(session, sub.id)
+    if len(devices) >= settings.device_limit:
+        return None, len(devices)
+
+    device = Device(
+        subscription_id=sub.id,
+        name=name or f"Устройство {len(devices) + 1}",
+        device_token=_new_token(),
+        client_uuid=str(uuid_lib.uuid4()),
+    )
+    session.add(device)
+    await session.flush()
+    await _enqueue_all_inbounds(session, sub)
+    return device, len(devices) + 1
+
+
+async def remove_device(
+    session: AsyncSession, user: User, device_id: int
+) -> bool:
+    sub = await repo.latest_subscription(session, user.id)
+    if sub is None:
+        return False
+    devices = await repo.devices_of_subscription(session, sub.id)
+    device = await repo.device_by_id(session, sub.id, device_id)
+    if device is None or len(devices) <= 1:
+        return False
+    await repo.deactivate_device(session, device)
+    return True
+
+
 async def expire_subscription(session: AsyncSession, sub: Subscription) -> None:
     """Погасить подписку: клиенты выключаются, ссылка остаётся валидной.
 
@@ -168,6 +219,9 @@ async def rotate_token(session: AsyncSession, sub: Subscription) -> Subscription
     """
     sub.sub_token = _new_token()
     sub.client_uuid = str(uuid_lib.uuid4())
+    for device in await repo.devices_of_subscription(session, sub.id):
+        device.device_token = sub.sub_token if device.name == "Основное устройство" else _new_token()
+        device.client_uuid = sub.client_uuid if device.name == "Основное устройство" else str(uuid_lib.uuid4())
     await repo.mark_clients(session, sub.id, ClientState.PENDING)
     return sub
 
