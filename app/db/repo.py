@@ -223,6 +223,25 @@ async def assign_node(session: AsyncSession, sub_id: int, node_id: int) -> None:
     )
 
 
+async def active_subscriptions_for_batch(
+    session: AsyncSession, node_id: int, limit: int
+) -> list[Subscription]:
+    assigned = select(SubscriptionNode.subscription_id).where(
+        SubscriptionNode.node_id == node_id
+    )
+    stmt = (
+        select(Subscription)
+        .where(
+            Subscription.status == SubStatus.ACTIVE.value,
+            Subscription.expires_at > utcnow(),
+            ~Subscription.id.in_(assigned),
+        )
+        .order_by(Subscription.id)
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
 async def unassign_node(session: AsyncSession, sub_id: int, node_id: int) -> None:
     await session.execute(
         update(SubscriptionClient)

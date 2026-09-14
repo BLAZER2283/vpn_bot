@@ -34,8 +34,9 @@ HELP = """<b>Админ-команды</b>
 /delnode &lt;id&gt; — удалить сервер
 /syncnodes — перечитать инбаунды со всех панелей
 /drain — прогнать очередь выдачи сейчас
-/grantnode &lt;tg_id&gt; &lt;node_id&gt; — выдать ноду пользователю
-/revokenode &lt;tg_id&gt; &lt;node_id&gt; — убрать ноду у пользователя
+/grantnode &lt;tg_id[,tg_id...]&gt; &lt;node_id&gt; — выдать ноду группе
+/revokenode &lt;tg_id[,tg_id...]&gt; &lt;node_id&gt; — убрать ноду у группы
+/grantnodebatch &lt;node_id&gt; &lt;количество&gt; — выдать ноду следующей группе
 /delnode &lt;node_id&gt; — удалить ноду из панели бота
 
 Пользовательские команды устройств: /devices, /adddevice, /deldevice
@@ -217,17 +218,64 @@ async def cmd_grantnode(
     message: Message, command: CommandObject, session: AsyncSession
 ) -> None:
     args = (command.args or "").split()
-    if len(args) != 2 or not all(arg.isdigit() for arg in args):
-        await message.answer("Формат: <code>/grantnode tg_id node_id</code>")
+    if len(args) != 2 or not args[1].isdigit():
+        await message.answer(
+            "Формат: <code>/grantnode tg_id[,tg_id...] node_id</code>"
+        )
         return
-    user = await repo.get_user_by_tg(session, int(args[0]))
+    raw_ids = args[0].replace(";", ",").split(",")
+    if not raw_ids or not all(item.isdigit() for item in raw_ids):
+        await message.answer("Telegram ID должны быть числами через запятую")
+        return
     node = await repo.node_by_id(session, int(args[1]))
-    sub = await repo.latest_subscription(session, user.id) if user else None
-    if user is None or node is None or sub is None:
-        await message.answer("Пользователь, сервер или подписка не найдены")
+    if node is None:
+        await message.answer("Сервер не найден")
         return
-    tasks = await node_service.assign_node_to_subscription(session, sub, node)
-    await message.answer(f"Нода {node.name} назначена. Задач на выдачу: {tasks}")
+    granted = 0
+    tasks = 0
+    missing = 0
+    for tg_id in dict.fromkeys(int(item) for item in raw_ids):
+        user = await repo.get_user_by_tg(session, tg_id)
+        sub = await repo.latest_subscription(session, user.id) if user else None
+        if user is None or sub is None:
+            missing += 1
+            continue
+        tasks += await node_service.assign_node_to_subscription(session, sub, node)
+        granted += 1
+    await message.answer(
+        f"Нода {node.name} назначена: {granted} подпискам.\n"
+        f"Задач на выдачу: {tasks}\n"
+        f"Пропущено без пользователя/подписки: {missing}"
+    )
+
+
+@router.message(Command("grantnodebatch"))
+async def cmd_grantnodebatch(
+    message: Message, command: CommandObject, session: AsyncSession
+) -> None:
+    args = (command.args or "").split()
+    if len(args) != 2 or not all(arg.isdigit() for arg in args):
+        await message.answer("Формат: <code>/grantnodebatch node_id количество</code>")
+        return
+    node = await repo.node_by_id(session, int(args[0]))
+    limit = int(args[1])
+    if node is None:
+        await message.answer("Сервер не найден")
+        return
+    if limit < 1 or limit > 10000:
+        await message.answer("Количество должно быть от 1 до 10000")
+        return
+    subscriptions = await repo.active_subscriptions_for_batch(
+        session, node.id, limit
+    )
+    tasks = 0
+    for sub in subscriptions:
+        tasks += await node_service.assign_node_to_subscription(session, sub, node)
+    await message.answer(
+        f"Нода {node.name} назначена {len(subscriptions)} подпискам.\n"
+        f"Задач на выдачу: {tasks}\n"
+        "Для следующей группы используй эту же команду с другой нодой."
+    )
 
 
 @router.message(Command("revokenode"))
@@ -235,17 +283,33 @@ async def cmd_revokenode(
     message: Message, command: CommandObject, session: AsyncSession
 ) -> None:
     args = (command.args or "").split()
-    if len(args) != 2 or not all(arg.isdigit() for arg in args):
-        await message.answer("Формат: <code>/revokenode tg_id node_id</code>")
+    if len(args) != 2 or not args[1].isdigit():
+        await message.answer(
+            "Формат: <code>/revokenode tg_id[,tg_id...] node_id</code>"
+        )
         return
-    user = await repo.get_user_by_tg(session, int(args[0]))
     node = await repo.node_by_id(session, int(args[1]))
-    sub = await repo.latest_subscription(session, user.id) if user else None
-    if user is None or node is None or sub is None:
-        await message.answer("Пользователь, сервер или подписка не найдены")
+    raw_ids = args[0].replace(";", ",").split(",")
+    if node is None:
+        await message.answer("Сервер не найден")
         return
-    await node_service.unassign_node_from_subscription(session, sub, node)
-    await message.answer(f"Нода {node.name} убирается у пользователя через очередь.")
+    if not raw_ids or not all(item.isdigit() for item in raw_ids):
+        await message.answer("Telegram ID должны быть числами через запятую")
+        return
+    revoked = 0
+    missing = 0
+    for tg_id in dict.fromkeys(int(item) for item in raw_ids):
+        user = await repo.get_user_by_tg(session, tg_id)
+        sub = await repo.latest_subscription(session, user.id) if user else None
+        if user is None or sub is None:
+            missing += 1
+            continue
+        await node_service.unassign_node_from_subscription(session, sub, node)
+        revoked += 1
+    await message.answer(
+        f"Нода {node.name} отзывается у {revoked} подписок через очередь.\n"
+        f"Пропущено без пользователя/подписки: {missing}"
+    )
 
 
 @router.message(Command("give"))

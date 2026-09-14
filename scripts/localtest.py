@@ -267,6 +267,10 @@ async def main() -> int:
             sub2 = await sub_service.create_subscription(
                 session, user2, days=1
             )
+            node1 = await repo.node_by_id(session, node1_id)
+            assert node1 is not None
+            await node_service.assign_node_to_subscription(session, sub2, node1)
+            await node_service.assign_node_to_subscription(session, sub2, node2)
             await session.commit()
             sub2_id, token2 = sub2.id, sub2.sub_token
 
